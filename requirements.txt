@@ -1,0 +1,5 @@
+telethon
+cryptg
+psutil
+asyncio
+speedtest-cli
