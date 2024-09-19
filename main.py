@@ -768,7 +768,7 @@ async def edit_reload_message():
 async def final_edit_reload_message(chat_entity, message_id):
     await asyncio.sleep(2)
     try:
-        new_text = "**Reloaded!!**"
+        new_text = "**😵‍💫**"
         new_message = await natsu.edit_message(chat_entity, message_id, text=new_text, parse_mode='markdown')
         await asyncio.sleep(5)
         await natsu.delete_messages(chat_entity, new_message.id)
