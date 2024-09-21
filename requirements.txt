@@ -3,3 +3,4 @@ cryptg
 psutil
 asyncio
 speedtest-cli
+aiohttp
