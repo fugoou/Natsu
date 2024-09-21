@@ -10,6 +10,7 @@ import time
 import datetime
 import contextlib
 import cryptg
+import aiohttp
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.tl.functions.messages import UpdatePinnedMessageRequest
@@ -22,9 +23,36 @@ from config import string, api_id, api_hash, USER_ID
 natsu = TelegramClient(StringSession(string), api_id, api_hash)
 start_time = time.time()
 message_info_file = 'message_info.json'
+available_endpoints = []
 
 def is_authorized(user_id):
     return user_id == USER_ID
+
+async def fetch_available_endpoints():
+    global available_endpoints
+    url = "https://nekos.best/api/v2/endpoints"
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as response:
+            if response.status == 200:
+                data = await response.json()
+
+                available_endpoints = list(data.keys())
+                print("Available endpoints:", available_endpoints)
+            else:
+                available_endpoints = []
+                print(f"Failed to fetch endpoints. HTTP Status: {response.status}")
+
+async def get_neko_media(endpoint):
+    url = f"https://nekos.best/api/v2/{endpoint}"
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as response:
+            if response.status == 200:
+                data = await response.json()
+                media_url = data['results'][0]['url']
+                media_type = 'gif' if media_url.endswith('.gif') else 'png'
+                return media_url, media_type
+            else:
+                return None, None
 
 @natsu.on(events.NewMessage(pattern=r'^help$'))
 async def help_command(event):
@@ -32,28 +60,47 @@ async def help_command(event):
         return
 
     help_message = """
+**Basic Commands:**
 - `ping`: Check the Natsu's response time.
 - `systeminfo`: Get system information (network, disk, CPU, uptime).
 - `reload`: Reload the Natsu.
 - `speedtest`: Run internet speed test.
 - `listgroups`: List all groups and channels the Natsu is in.
+- `groupinfo`: Get detailed group information.
+- `listbots`: List bots in the current chat.
+- `chatstats [chat_id]`: Get statistics for a specific chat.
+- `countdown [seconds]`: Run a countdown timer.
+- `topmessages [limit]`: Show the top messages in the chat.
+
+**User Management:**
 - `ban [username|ID]`: Ban a user from the chat.
 - `unban [username|ID]`: Unban a user from the chat.
 - `kick [username|ID]`: Kick a user from the chat.
 - `kickme [group_id]`: Leave the current group or a specified group.
-- `mute [username|ID] <duration>[mhd]`: Mute a user for a specified duration (m for minutes, h for hours, d for days) or indefinitely using 'forever'.
+- `mute [username|ID] <duration>[mhd]`: Mute a user for a specified duration or indefinitely.
 - `unmute [username|ID]`: Unmute a user.
 - `promote [username|ID]`: Promote a user to admin.
 - `demote [username|ID]`: Demote a user from admin.
 - `admintitle [username|ID] <title>`: Set a custom admin title for a user.
-- `whois [username|ID]`: Get user info.
+- `purge [username|ID]`: Purge all messages from a user.
+
+**Message Management:**
 - `pin`: Pin a message (requires a reply to the message you want to pin).
 - `unpin`: Unpin the replied message.
 - `del`: Delete the replied message.
-- `purge [username|ID]`: Purge all messages from a user.
+- `setslowmode [seconds]`: Set slow mode for the chat.
+  
+**User Information:**
+- `whois [username|ID]`: Get user info.
+- `listbots`: List all bots in the chat.
+
+**Advanced Commands:**
 - `$ <command>`: Execute a shell command.
 - `> <expression>`: Evaluate a Python expression.
 - `exec <code>`: Execute Python code.
+
+**Misc:**
+- `/<category>`: Get media from Nekos API (e.g., `/neko`, `/hug`, `/pat`, etc.).
 """
     await event.reply(help_message, parse_mode='markdown')
 
@@ -715,6 +762,188 @@ async def list_groups(event):
     except Exception as e:
         await processing_message.edit(f"Error: {str(e)}")
 
+@natsu.on(events.NewMessage(pattern=r'^chatstats(?: (\d+))?$'))
+async def chat_stats(event):
+    if not is_authorized(event.sender_id):
+        return
+    
+    chat_id = event.pattern_match.group(1)
+    if chat_id:
+        chat_id = int(chat_id)
+    else:
+        chat_id = event.chat_id
+    
+    try:
+        chat = await natsu.get_entity(chat_id)
+        
+        total_messages = await natsu(functions.messages.GetHistoryRequest(
+            peer=chat,
+            offset_id=0,
+            offset_date=None,
+            add_offset=0,
+            limit=1,
+            max_id=0,
+            min_id=0,
+            hash=0
+        ))
+        
+        try:
+            participants = await natsu.get_participants(chat)
+            member_count = len(participants)
+        except Exception:
+            member_count = "Unknown"
+        
+        admin_count = sum(1 for p in participants if p.participant.admin_rights)
+        
+        stats = f"""
+**Chat Statistics for {chat.title}:**
+- Total Messages: {total_messages.count}
+- Total Members: {member_count}
+- Admin Count: {admin_count}
+"""
+        await event.reply(stats, parse_mode='markdown')
+    except Exception as e:
+        await event.reply(f"Error fetching chat stats: {str(e)}")
+
+@natsu.on(events.NewMessage(pattern=r'^setslowmode(?: (\d+))?$'))
+async def set_slowmode(event):
+    if not is_authorized(event.sender_id):
+        return
+    
+    seconds = event.pattern_match.group(1)
+    if not seconds:
+        await event.reply("Please specify the number of seconds for slow mode.")
+        return
+    
+    try:
+        seconds = int(seconds)
+        await natsu(functions.channels.ToggleSlowModeRequest(
+            channel=event.chat_id,
+            seconds=seconds
+        ))
+        if seconds == 0:
+            await event.reply("Slow mode has been turned off.")
+        else:
+            await event.reply(f"Slow mode set to {seconds} seconds.")
+    except ValueError:
+        await event.reply("Invalid input. Please provide a valid number of seconds.")
+    except Exception as e:
+        await event.reply(f"Error setting slow mode: {str(e)}")
+
+@natsu.on(events.NewMessage(pattern=r'^listbots$'))
+async def list_bots(event):
+    if not is_authorized(event.sender_id):
+        return
+    
+    try:
+        participants = await natsu.get_participants(event.chat_id)
+        bots = [p for p in participants if p.bot]
+        
+        if bots:
+            bot_list = "\n".join([f"- @{bot.username} (ID: `{bot.id}`)" for bot in bots])
+            message = f"**Bots in this chat:**\n{bot_list}"
+        else:
+            message = "No bots found in this chat."
+        
+        await event.reply(message, parse_mode='markdown')
+    except Exception as e:
+        await event.reply(f"Error listing bots: {str(e)}")
+
+@natsu.on(events.NewMessage(pattern=r'^groupinfo$'))
+async def group_info(event):
+    if not is_authorized(event.sender_id):
+        return
+    
+    try:
+        chat = await event.get_chat()
+        if not isinstance(chat, (types.Chat, types.Channel)):
+            await event.reply("This command can only be used in groups or channels.")
+            return
+
+        chat_info = f"**Group Information:**\n"
+        chat_info += f"Title: {chat.title}\n"
+        chat_info += f"ID: `{chat.id}`\n"
+        
+        if hasattr(chat, 'username'):
+            chat_info += f"Username: @{chat.username}\n"
+        
+        try:
+            full_chat = await natsu(functions.channels.GetFullChannelRequest(chat))
+            chat_info += f"Members: {full_chat.full_chat.participants_count}\n"
+        except Exception:
+            chat_info += "Members: Unable to retrieve\n"
+        
+        if hasattr(chat, 'date'):
+            chat_info += f"Created: {chat.date.strftime('%Y-%m-%d %H:%M:%S')}\n"
+        
+        if hasattr(chat, 'description'):
+            chat_info += f"\nDescription: {chat.description}\n"
+
+        await event.reply(chat_info, parse_mode='markdown')
+    except Exception as e:
+        await event.reply(f"Error fetching group info: {str(e)}")
+
+@natsu.on(events.NewMessage(pattern=r'^countdown (\d+)$'))
+async def countdown(event):
+    if not is_authorized(event.sender_id):
+        return
+    duration = int(event.pattern_match.group(1))
+    for i in range(duration, 0, -1):
+        await event.edit(f"Countdown: {i} seconds remaining")
+        await asyncio.sleep(1)
+    await event.edit("Countdown completed!")
+
+@natsu.on(events.NewMessage(pattern=r'^topmessages(?: (\d+))?$'))
+async def top_messages(event):
+    if not is_authorized(event.sender_id):
+        return
+    
+    limit = int(event.pattern_match.group(1) or 5)
+    
+    try:
+        messages = await natsu.get_messages(event.chat_id, limit=1000)
+        
+        top_messages = sorted(messages, key=lambda m: (m.replies.replies if m.replies else 0) + 
+                                                     (m.forwards or 0) + 
+                                                     (len(m.reactions.results) if m.reactions else 0), 
+                              reverse=True)[:limit]
+        
+        result = "**Top Messages:**\n\n"
+        for i, msg in enumerate(top_messages, 1):
+            sender = await msg.get_sender()
+            result += f"{i}. From: {sender.first_name}\n"
+            result += f"   Date: {msg.date.strftime('%Y-%m-%d %H:%M:%S')}\n"
+            result += f"   Content: {msg.text[:100]}{'...' if len(msg.text) > 100 else ''}\n"
+            result += f"   Replies: {msg.replies.replies if msg.replies else 0}, "
+            result += f"Forwards: {msg.forwards or 0}, "
+            result += f"Reactions: {len(msg.reactions.results) if msg.reactions else 0}\n\n"
+
+        await event.reply(result, parse_mode='markdown')
+    except Exception as e:
+        await event.reply(f"Error fetching top messages: {str(e)}")
+
+@natsu.on(events.NewMessage(pattern=r'^/(\w+)$'))
+async def nekos_command(event):
+    if not is_authorized(event.sender_id):
+        return
+
+    if not available_endpoints:
+        await fetch_available_endpoints()
+
+    subcommand = event.pattern_match.group(1).lower()
+
+    if subcommand not in available_endpoints:
+        available_list = ", ".join(available_endpoints)
+        await event.reply(f"Invalid Category! Available Categories: {available_list}.")
+        return
+
+    media_url, media_type = await get_neko_media(subcommand)
+
+    if media_url:
+        await natsu.send_file(event.chat_id, media_url, reply_to=event.id)
+    else:
+        await event.reply(f"Couldn't retrieve {subcommand} media.")
+
 @natsu.on(events.NewMessage(pattern=r'^reload$'))
 async def reload_command(event):
     if not is_authorized(event.sender_id):
@@ -749,7 +978,7 @@ async def edit_reload_message():
             current_message = await natsu.get_messages(chat_entity, ids=message_info['message_id'])
 
             if message_info.get('stage') == 'reloading':
-                new_text = "**Reload successful**"
+                new_text = "**😵‍💫**"
                 new_message = await natsu.edit_message(chat_entity, message_info['message_id'], text=new_text, parse_mode='markdown')
                 
                 message_info['stage'] = 'successful'
@@ -768,7 +997,7 @@ async def edit_reload_message():
 async def final_edit_reload_message(chat_entity, message_id):
     await asyncio.sleep(2)
     try:
-        new_text = "**😵‍💫**"
+        new_text = "**Reload successful!**"
         new_message = await natsu.edit_message(chat_entity, message_id, text=new_text, parse_mode='markdown')
         await asyncio.sleep(5)
         await natsu.delete_messages(chat_entity, new_message.id)
@@ -778,6 +1007,7 @@ async def final_edit_reload_message(chat_entity, message_id):
 
 async def preload_entities():
     await natsu.get_dialogs()
+    await fetch_available_endpoints()
 
 with natsu:
     natsu.loop.run_until_complete(preload_entities())
