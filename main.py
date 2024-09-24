@@ -11,6 +11,9 @@ import datetime
 import contextlib
 import cryptg
 import aiohttp
+import yt_dlp
+import shutil
+import re
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.tl.functions.messages import UpdatePinnedMessageRequest
@@ -27,6 +30,15 @@ available_endpoints = []
 
 def is_authorized(user_id):
     return user_id == USER_ID
+
+def check_ffmpeg():
+    return shutil.which('ffmpeg') is not None
+
+def sanitize_filename(filename):
+    filename = re.sub(r'[\\/*?:"<>|]', "", filename)
+    filename = filename.replace(' ', '_')
+    filename = filename[:200]
+    return filename
 
 async def fetch_available_endpoints():
     global available_endpoints
@@ -60,7 +72,6 @@ async def help_command(event):
         return
 
     help_message = """
-**Basic Commands:**
 - `ping`: Check the Natsu's response time.
 - `systeminfo`: Get system information (network, disk, CPU, uptime).
 - `reload`: Reload the Natsu.
@@ -71,8 +82,6 @@ async def help_command(event):
 - `chatstats [chat_id]`: Get statistics for a specific chat.
 - `countdown [seconds]`: Run a countdown timer.
 - `topmessages [limit]`: Show the top messages in the chat.
-
-**User Management:**
 - `ban [username|ID]`: Ban a user from the chat.
 - `unban [username|ID]`: Unban a user from the chat.
 - `kick [username|ID]`: Kick a user from the chat.
@@ -83,24 +92,16 @@ async def help_command(event):
 - `demote [username|ID]`: Demote a user from admin.
 - `admintitle [username|ID] <title>`: Set a custom admin title for a user.
 - `purge [username|ID]`: Purge all messages from a user.
-
-**Message Management:**
 - `pin`: Pin a message (requires a reply to the message you want to pin).
 - `unpin`: Unpin the replied message.
 - `del`: Delete the replied message.
 - `setslowmode [seconds]`: Set slow mode for the chat.
-  
-**User Information:**
 - `whois [username|ID]`: Get user info.
 - `listbots`: List all bots in the chat.
-
-**Advanced Commands:**
 - `$ <command>`: Execute a shell command.
 - `> <expression>`: Evaluate a Python expression.
 - `exec <code>`: Execute Python code.
-
-**Misc:**
-- `/<category>`: Get media from Nekos API (e.g., `/neko`, `/hug`, `/pat`, etc.).
+- `:<category>`: Get media from Nekos API (e.g., `/neko`, `/hug`, `/pat`, etc.).
 """
     await event.reply(help_message, parse_mode='markdown')
 
@@ -922,7 +923,7 @@ async def top_messages(event):
     except Exception as e:
         await event.reply(f"Error fetching top messages: {str(e)}")
 
-@natsu.on(events.NewMessage(pattern=r'^/(\w+)$'))
+@natsu.on(events.NewMessage(pattern=r'^:(\w+)$'))
 async def nekos_command(event):
     if not is_authorized(event.sender_id):
         return
@@ -943,6 +944,105 @@ async def nekos_command(event):
         await natsu.send_file(event.chat_id, media_url, reply_to=event.id)
     else:
         await event.reply(f"Couldn't retrieve {subcommand} media.")
+
+@natsu.on(events.NewMessage(pattern=r'^ytv (.+)$'))
+async def ytv(event):
+    if not is_authorized(event.sender_id):
+        return
+
+    if not check_ffmpeg():
+        await event.reply("Error: FFmpeg is not installed or not in the system PATH. Please install FFmpeg to use this command.")
+        return
+
+    url = event.pattern_match.group(1)
+    
+    try:
+        with yt_dlp.YoutubeDL({'outtmpl': '%(title)s.%(ext)s'}) as ydl:
+            info_dict = ydl.extract_info(url, download=False)
+            video_title = info_dict.get('title', None)
+            sanitized_title = sanitize_filename(video_title)
+            file_name = f"{sanitized_title}.mp4".rstrip(".mp4") + ".mp4"
+
+        status_message = await event.reply("Downloading video... Please wait.")
+
+        ydl_opts = {
+    'format': 'best',
+    'postprocessors': [{
+        'key': 'FFmpegVideoConvertor',
+        'preferedformat': 'mp4',
+    }],
+    'outtmpl': f'{sanitized_title}.%(ext)s',
+        }
+
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+
+        await status_message.edit("Download complete. Uploading...")
+        
+        if os.path.exists(file_name):
+            await natsu.send_file(
+                event.chat_id,
+                file_name,
+                caption=f"{video_title}",
+                reply_to=event.id
+            )
+            os.remove(file_name)
+            await status_message.delete()
+        else:
+            await status_message.edit(f"Error: File {file_name} not found after download.")
+
+    except Exception as e:
+        await event.reply(f"An error occurred: {str(e)}")
+
+@natsu.on(events.NewMessage(pattern=r'^yta (.+)$'))
+async def yta(event):
+    if not is_authorized(event.sender_id):
+        return
+
+    if not check_ffmpeg():
+        await event.reply("Error: FFmpeg is not installed or not in the system PATH. Please install FFmpeg to use this command.")
+        return
+
+    url = event.pattern_match.group(1)
+
+    try:
+        with yt_dlp.YoutubeDL({'outtmpl': '%(title)s.%(ext)s'}) as ydl:
+            info_dict = ydl.extract_info(url, download=False)
+            audio_title = info_dict.get('title', None)
+            sanitized_title = sanitize_filename(audio_title)
+            file_name = f"{sanitized_title}.mp3".rstrip(".mp3") + ".mp3"
+
+        status_message = await event.reply("Downloading audio... Please wait.")
+
+        ydl_opts = {
+            'format': 'bestaudio',
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }],
+            'outtmpl': f'{sanitized_title}.%(ext)s',
+        }
+
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.extract_info(url, download=True)
+
+        await status_message.edit("Download complete. Uploading...")
+
+        if os.path.exists(file_name):
+            await natsu.send_file(
+                event.chat_id,
+                file_name,
+                caption=f"{audio_title}",
+                reply_to=event.id
+            )
+            os.remove(file_name)
+            await status_message.delete()
+        else:
+            await status_message.edit(f"Error: File {file_name} not found after download.")
+
+    except Exception as e:
+        await event.reply(f"An error occurred: {str(e)}")
 
 @natsu.on(events.NewMessage(pattern=r'^reload$'))
 async def reload_command(event):
