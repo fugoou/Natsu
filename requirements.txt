@@ -4,3 +4,4 @@ psutil
 asyncio
 speedtest-cli
 aiohttp
+yt-dlp
