@@ -1,6 +1,7 @@
 ## Prerequisites
 
 - Python 3.7+
+- FFmpeg
 - Telethon library
 - Other dependencies (see `requirements.txt`)
 
