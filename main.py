@@ -62,9 +62,17 @@ async def get_neko_media(endpoint):
                 data = await response.json()
                 media_url = data['results'][0]['url']
                 media_type = 'gif' if media_url.endswith('.gif') else 'png'
-                return media_url, media_type
+                
+                if media_type != 'gif':
+                    artist_href = data['results'][0].get('artist_href', 'Unknown')
+                    artist_name = data['results'][0].get('artist_name', 'Unknown')
+                    source_url = data['results'][0].get('source_url', 'Unknown')
+                else:
+                    artist_href, artist_name, source_url = None, None, None
+
+                return media_url, media_type, artist_href, artist_name, source_url
             else:
-                return None, None
+                return None, None, None, None, None
 
 @natsu.on(events.NewMessage(pattern=r'^help$'))
 async def help_command(event):
@@ -102,6 +110,8 @@ async def help_command(event):
 - `> <expression>`: Evaluate a Python expression.
 - `exec <code>`: Execute Python code.
 - `:<category>`: Get media from Nekos API (e.g., `/neko`, `/hug`, `/pat`, etc.).
+- `ytv <url>`: Download and send a YouTube video.
+- `yta <url>`: Download and send a YouTube audio as MP3
 """
     await event.reply(help_message, parse_mode='markdown')
 
@@ -794,7 +804,7 @@ async def chat_stats(event):
         except Exception:
             member_count = "Unknown"
         
-        admin_count = sum(1 for p in participants if p.participant.admin_rights)
+        admin_count = sum(1 for p in participants if hasattr(p.participant, 'admin_rights') and p.participant.admin_rights)
         
         stats = f"""
 **Chat Statistics for {chat.title}:**
@@ -938,10 +948,14 @@ async def nekos_command(event):
         await event.reply(f"Invalid Category! Available Categories: {available_list}.")
         return
 
-    media_url, media_type = await get_neko_media(subcommand)
+    media_url, media_type, artist_href, artist_name, source_url = await get_neko_media(subcommand)
 
     if media_url:
-        await natsu.send_file(event.chat_id, media_url, reply_to=event.id)
+        if media_type != 'gif':
+            caption = f"Artist: [{artist_name}]({artist_href})\nSource: [{source_url}]({source_url})"
+            await natsu.send_file(event.chat_id, media_url, caption=caption, reply_to=event.id, parse_mode='markdown')
+        else:
+            await natsu.send_file(event.chat_id, media_url, reply_to=event.id)
     else:
         await event.reply(f"Couldn't retrieve {subcommand} media.")
 
