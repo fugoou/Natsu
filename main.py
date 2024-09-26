@@ -87,7 +87,6 @@ async def help_command(event):
 - `listgroups`: List all groups and channels the Natsu is in.
 - `groupinfo`: Get detailed group information.
 - `listbots`: List bots in the current chat.
-- `chatstats [chat_id]`: Get statistics for a specific chat.
 - `countdown [seconds]`: Run a countdown timer.
 - `topmessages [limit]`: Show the top messages in the chat.
 - `ban [username|ID]`: Ban a user from the chat.
@@ -773,49 +772,6 @@ async def list_groups(event):
     except Exception as e:
         await processing_message.edit(f"Error: {str(e)}")
 
-@natsu.on(events.NewMessage(pattern=r'^chatstats(?: (\d+))?$'))
-async def chat_stats(event):
-    if not is_authorized(event.sender_id):
-        return
-    
-    chat_id = event.pattern_match.group(1)
-    if chat_id:
-        chat_id = int(chat_id)
-    else:
-        chat_id = event.chat_id
-    
-    try:
-        chat = await natsu.get_entity(chat_id)
-        
-        total_messages = await natsu(functions.messages.GetHistoryRequest(
-            peer=chat,
-            offset_id=0,
-            offset_date=None,
-            add_offset=0,
-            limit=1,
-            max_id=0,
-            min_id=0,
-            hash=0
-        ))
-        
-        try:
-            participants = await natsu.get_participants(chat)
-            member_count = len(participants)
-        except Exception:
-            member_count = "Unknown"
-        
-        admin_count = sum(1 for p in participants if hasattr(p.participant, 'admin_rights') and p.participant.admin_rights)
-        
-        stats = f"""
-**Chat Statistics for {chat.title}:**
-- Total Messages: {total_messages.count}
-- Total Members: {member_count}
-- Admin Count: {admin_count}
-"""
-        await event.reply(stats, parse_mode='markdown')
-    except Exception as e:
-        await event.reply(f"Error fetching chat stats: {str(e)}")
-
 @natsu.on(events.NewMessage(pattern=r'^setslowmode(?: (\d+))?$'))
 async def set_slowmode(event):
     if not is_authorized(event.sender_id):
@@ -881,15 +837,33 @@ async def group_info(event):
         try:
             full_chat = await natsu(functions.channels.GetFullChannelRequest(chat))
             chat_info += f"Members: {full_chat.full_chat.participants_count}\n"
+            chat_info += f"Description: {full_chat.full_chat.about or 'No description'}\n"
         except Exception:
             chat_info += "Members: Unable to retrieve\n"
-        
-        if hasattr(chat, 'date'):
-            chat_info += f"Created: {chat.date.strftime('%Y-%m-%d %H:%M:%S')}\n"
-        
-        if hasattr(chat, 'description'):
-            chat_info += f"\nDescription: {chat.description}\n"
+            chat_info += "Description: Unable to retrieve\n"
 
+        total_messages = await natsu(functions.messages.GetHistoryRequest(
+            peer=chat,
+            offset_id=0,
+            offset_date=None,
+            add_offset=0,
+            limit=1,
+            max_id=0,
+            min_id=0,
+            hash=0
+        ))
+        
+        try:
+            participants = await natsu.get_participants(chat)
+            member_count = len(participants)
+        except Exception:
+            member_count = "Unknown"
+        
+        admin_count = sum(1 for p in participants if hasattr(p.participant, 'admin_rights') and p.participant.admin_rights)
+        
+        chat_info += f"Total Messages: {total_messages.count}\n"
+        chat_info += f"Admin Count: {admin_count}\n"
+        
         await event.reply(chat_info, parse_mode='markdown')
     except Exception as e:
         await event.reply(f"Error fetching group info: {str(e)}")
