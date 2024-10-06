@@ -108,7 +108,7 @@ async def help_command(event):
 - `$ <command>`: Execute a shell command.
 - `> <expression>`: Evaluate a Python expression.
 - `exec <code>`: Execute Python code.
-- `:<category>`: Get media from Nekos API (e.g., `/neko`, `/hug`, `/pat`, etc.).
+- `:<category>`: Get media from Nekos API (e.g., `:neko`, `:hug`, `:pat`, etc.).
 - `ytv <url>`: Download and send a YouTube video.
 - `yta <url>`: Download and send a YouTube audio as MP3
 """
