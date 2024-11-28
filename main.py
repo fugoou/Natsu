@@ -40,6 +40,16 @@ def sanitize_filename(filename):
     filename = filename[:200]
     return filename
 
+async def animate_dots(message):
+    dots = ""
+    try:
+        while True:
+            dots = "." if len(dots) == 3 else dots + "."
+            await message.edit(f"{dots}")
+            await asyncio.sleep(0.5)
+    except asyncio.CancelledError:
+        pass
+
 async def fetch_available_endpoints():
     global available_endpoints
     url = "https://nekos.best/api/v2/endpoints"
@@ -1031,6 +1041,37 @@ async def yta(event):
 
     except Exception as e:
         await event.reply(f"An error occurred: {str(e)}")
+
+@natsu.on(events.NewMessage(pattern=r'^hoshi\s+([\s\S]+)$'))
+async def llm(event):
+    if not is_authorized(event.sender_id):
+        return
+
+    input_data = event.pattern_match.group(1).strip()
+
+    status_message = await event.reply("...")
+    animation_task = asyncio.create_task(animate_dots(status_message))
+
+    encoded_message = input_data.replace('\n', '%0A')
+    url = f"https://ai.fugoou.xyz/?message={encoded_message}"
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    ai_response = data[0]['response'].get('response', 'No response text available.')
+                    await status_message.edit(f"{ai_response}")
+                else:
+                    await status_message.edit(f"**HTTP Error:** {response.status}")
+    except Exception as e:
+        await status_message.edit(f"Error: {str(e)}")
+    finally:
+        animation_task.cancel()
+        try:
+            await animation_task
+        except asyncio.CancelledError:
+            pass
 
 @natsu.on(events.NewMessage(pattern=r'^reload$'))
 async def reload_command(event):
